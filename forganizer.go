@@ -60,8 +60,10 @@ func processDir(src string, dst string, opts options) {
 		}
 		keep_after := time.Now().AddDate(0, 0, -1*opts.days_older)
 		for i := 0; i < len(files); i++ {
-			if files[i].IsDir() && opts.recursive {
-				defer processDir(path.Join(src, files[i].Name()), dst, opts)
+			if files[i].IsDir() {
+				if opts.recursive {
+					defer processDir(path.Join(src, files[i].Name()), dst, opts)
+				}
 				continue
 			}
 			mod_time := files[i].ModTime()
