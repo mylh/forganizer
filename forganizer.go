@@ -39,10 +39,10 @@ func main() {
 		printUsage()
 		return
 	}
-	processDir(src, dst, &opts)
+	processDir(src, dst, opts)
 }
 
-func processDir(src string, dst string, opts *options) {
+func processDir(src string, dst string, opts options) {
 	fmt.Printf("Processing directory: %v\n", src)
 	dir, err := os.Open(src)
 	if err != nil {
@@ -70,14 +70,14 @@ func processDir(src string, dst string, opts *options) {
 				continue
 			}
 			fmt.Printf("  Processing file: %v\n", files[i].Name())
-			processFile(src, &files[i], dst, opts)
+			processFile(src, files[i], dst, opts)
 		}
 	}
 }
 
-func processFile(src_dir string, source *os.FileInfo, dst_dir string, opts *options) {
-	mod_time := (*source).ModTime()
-	name := (*source).Name()
+func processFile(src_dir string, source os.FileInfo, dst_dir string, opts options) {
+	mod_time := source.ModTime()
+	name := source.Name()
 	source_path := path.Join(src_dir, name)
 	target_dir := path.Join(
 		dst_dir,
@@ -85,7 +85,7 @@ func processFile(src_dir string, source *os.FileInfo, dst_dir string, opts *opti
 	target_path := path.Join(target_dir, name)
 	fmt.Print("    -> ", target_path, ": ")
 	if is_exists, target := isExists(target_path); is_exists {
-		if os.SameFile(*source, *target) {
+		if os.SameFile(source, target) {
 			fmt.Println("same file, skipping")
 			return
 		}
@@ -107,7 +107,7 @@ func processFile(src_dir string, source *os.FileInfo, dst_dir string, opts *opti
 	if !opts.dry_run {
 		if exists, _ := isExists(target_dir); !exists {
 			_, src_dir_info := isExists(src_dir)
-			err := os.MkdirAll(target_dir, (*src_dir_info).Mode())
+			err := os.MkdirAll(target_dir, src_dir_info.Mode())
 			if err != nil {
 				fmt.Println("error creating target directory: ", err)
 				return
@@ -122,18 +122,26 @@ func processFile(src_dir string, source *os.FileInfo, dst_dir string, opts *opti
 	fmt.Println("moved")
 }
 
-func isExists(filename string) (bool, *os.FileInfo) {
+func isExists(filename string) (bool, os.FileInfo) {
 	fileinfo, err := os.Stat(filename)
 	if os.IsNotExist(err) {
 		return false, nil
 	}
-	return true, &fileinfo
+	return true, fileinfo
 }
 
 func genUniqueName(dir, filename string) string {
 	split := strings.Split(filename, ".")
-	name, ext := split[0], split[1]
-
+	var name, ext string
+	switch len(split) {
+	case 1:
+		name, ext = split[0], ""
+	case 2:
+		name, ext = split[0], split[1]
+	default:
+		name = strings.Join(split[0:len(split)-1], ".")
+		ext = split[len(split)-1]
+	}
 	for i := 1; i > 0; i++ {
 		newpath := path.Join(dir, fmt.Sprintf("%s_%d.%s", name, i, ext))
 		if is_exists, _ := isExists(newpath); !is_exists {
@@ -151,13 +159,14 @@ func haveSameContents(file1, file2 string) bool {
 
 func printUsage() {
 	fmt.Println(`
-Usage: forganize [-r] [-dry] SRC DST
+Usage: forganize [-r] [-dry] [-d DAYS] SRC DST
 
 SRC - source directory
 DST - root directory for organized files
 
 Options:
     -r - scan files recursively into SRC subdirectories
+    -d DAYS - do not process files newer than DAYS days from now
     -dry - dry run
 `)
 }
