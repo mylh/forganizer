@@ -11,17 +11,21 @@ leaving let's say 30 last days of photos on your phone.
 package main
 
 import (
+	"errors"
 	"flag"
 	"fmt"
+	"github.com/barasher/go-exiftool"
 	"github.com/codingsince1985/checksum"
 	"io"
 	"os"
 	"path"
+	"strconv"
 	"strings"
 	"time"
 )
 
 type options struct {
+	exif       bool
 	recursive  bool
 	dry_run    bool
 	days_older int
@@ -29,6 +33,7 @@ type options struct {
 
 func main() {
 	var opts options
+	flag.BoolVar(&opts.exif, "exif", false, "read date from EXIF data if possible")
 	flag.BoolVar(&opts.recursive, "r", false, "recursive into directories")
 	flag.BoolVar(&opts.dry_run, "dry", false, "dry run, do not modify files or directories, only print results")
 	flag.IntVar(&opts.days_older, "d", 0, "only process files older than this number of days")
@@ -42,12 +47,22 @@ func main() {
 	processDir(src, dst, opts)
 }
 
+var et *exiftool.Exiftool
+
 func processDir(src string, dst string, opts options) {
 	fmt.Printf("Processing directory: %v\n", src)
 	dir, err := os.Open(src)
 	if err != nil {
 		fmt.Printf("Error accessing directory: %v\n", err)
 		return
+	}
+	if opts.exif {
+		et, err = exiftool.NewExiftool()
+		if err != nil {
+			fmt.Printf("Error when intializing EXIF: %v\n", err)
+			return
+		}
+		defer et.Close()
 	}
 	for {
 		files, err := dir.Readdir(100)
@@ -78,9 +93,19 @@ func processDir(src string, dst string, opts options) {
 }
 
 func processFile(src_dir string, source os.FileInfo, dst_dir string, opts options) {
-	mod_time := source.ModTime()
+	var mod_time time.Time
+	var err error
 	name := source.Name()
 	source_path := path.Join(src_dir, name)
+	if opts.exif {
+		mod_time, err = getExifTime(source_path)
+		if err != nil {
+			fmt.Println("    Exif error:", err)
+			mod_time = source.ModTime()
+		}
+	} else {
+		mod_time = source.ModTime()
+	}
 	target_dir := path.Join(
 		dst_dir,
 		fmt.Sprintf("%d/%02d", mod_time.Year(), mod_time.Month()))
@@ -159,9 +184,51 @@ func haveSameContents(file1, file2 string) bool {
 	return md5_1 == md5_2
 }
 
+func toString(v interface{}) string {
+	switch v := v.(type) {
+	case string:
+		return v
+	case float64:
+		return strconv.FormatFloat(v, 'f', -1, 64)
+	case int64:
+		return strconv.FormatInt(v, 10)
+	default:
+		return fmt.Sprintf("%v", v)
+	}
+}
+
+func getExifTime(path string) (time.Time, error) {
+	var (
+		t time.Time
+	)
+	fileInfo := et.ExtractMetadata(path)[0]
+	if fileInfo.Err != nil {
+		return time.Now(), fileInfo.Err
+	}
+	v, ok := fileInfo.Fields["DateTimeOriginal"]
+	if !ok {
+		v, ok = fileInfo.Fields["CreateDate"]
+	}
+	if !ok {
+		v, ok = fileInfo.Fields["ModifyDate"]
+	}
+	if !ok {
+		return t, errors.New("No EXIF date found")
+	}
+	date_str := toString(v)
+	if len(date_str) > 19 {
+		date_str = date_str[:19]
+	}
+	t, err := time.Parse("2006:01:02 15:04:05", date_str)
+	if err != nil {
+		return t, errors.New("Error parsing time")
+	}
+	return t, nil
+}
+
 func printUsage() {
 	fmt.Println(`
-Usage: forganize [-r] [-dry] [-d DAYS] SRC DST
+Usage: forganize [-r] [-dry] [-exif] [-d DAYS] SRC DST
 
 SRC - source directory
 DST - root directory for organized files
@@ -169,6 +236,7 @@ DST - root directory for organized files
 Options:
     -r - scan files recursively into SRC subdirectories
     -d DAYS - do not process files newer than DAYS days from now
+    -exif - use EXIF date if possible (needs installed exiftool package)
     -dry - dry run
 `)
 }
